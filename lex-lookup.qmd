@@ -1,0 +1,615 @@
+---
+title: "Lex Lookup"
+author: "Ryan Yeung"
+date: '2023-02-23'
+format:
+  html:
+    toc: true
+    toc-location: left
+    code-fold: true
+    code-tools: true
+    code-block-bg: true
+    code-link: true
+    code-copy: true
+    theme: sandstone
+    df-print: paged
+---
+
+```{r setup, echo = FALSE}
+pacman::p_load(tidyverse, readxl, janitor, broom,
+               stringi, textclean, nsyllable, 
+               udpipe, stopwords, sentimentr, magrittr,
+               gtsummary, ggstatsplot)
+```
+
+This script looks up lexical properties of words in text documents based on normed ratings and summarizes (and, if wanted, analyzes) them across documents and any other variables (continuous or categorical). Technically, some calculated variables are not entirely lexical (e.g., sentiment), but I couldn't think of a better name. *Problem for future me, I guess.*
+
+The norms that are currently included are:
+
+* Brysbaert, M., Mandera, P., McCormick, S. F., & Keuleers, E. (2019). Word prevalence norms for 62,000 English lemmas. *Behavior Research Methods*, *51*, 467-479. [https://doi.org/10.3758/s13428-018-1077-9](https://doi.org/10.3758/s13428-018-1077-9){target="_blank"}
+* Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014). Concreteness ratings for 40 thousand generally known English word lemmas. *Behavior Research Methods*, *46*, 904-911. [https://doi.org/10.3758/s13428-013-0403-5](https://doi.org/10.3758/s13428-013-0403-5){target="_blank"}
+* Clark, J. M., & Paivio, A. (2004). Extensions of the Paivio, Yuille, and Madigan (1968) norms. *Behavior Research Methods, Instruments, & Computers*, *36*(3), 371-383. [https://doi.org/10.3758/bf03195584](https://doi.org/10.3758/bf03195584){target="_blank"}
+* Diveica, V., Pexman, P. M., & Binney, R. J. (2022). Quantifying social semantics: An inclusive definition of socialness and ratings for 8388 English words. *Behavior Research Methods*, 1-13. [https://doi.org/10.3758/s13428-022-01810-x](https://doi.org/10.3758/s13428-022-01810-x){target="_blank"}
+* Kuperman, V., Stadthagen-Gonzalez, H., & Brysbaert, M. (2012). Age-of-acquisition ratings for 30,000 English words. *Behavior Research Methods*, *44*, 978-990. [https://doi.org/10.3758/s13428-012-0210-4](https://doi.org/10.3758/s13428-012-0210-4){target="_blank"}
+
+## Data Prep
+
+::: {.panel-tabset}
+
+### Import Data
+
+Import data (in CSV format) from `data` folder. File should include text (in column named "text") and any amount of metadata (other columns).
+
+```{r import data}
+df_data_raw <- 
+  read_csv("data/text_data.csv") # can edit this line if data are in other format (.xlsx, .sav, etc.)
+
+### clean variable names
+df_data_clean <- 
+  df_data_raw %>% 
+  clean_names() 
+
+### convert non-UTF-8 to UTF-8 encoding
+### be careful with sneaky non-ASCII characters, as they can get converted weird
+### look out for em- and en-dashes, curly quotation marks, and curly apostrophes
+### this section tries to clean these out as best as they can, but should still be cautious
+df_data_clean <-
+  df_data_clean %>%
+  mutate(text = stri_unescape_unicode(text)) %>% 
+  mutate(text = stri_enc_toutf8(text)) %>% 
+  mutate(text = replace_curly_quote(text)) %>% 
+  mutate(text = replace_non_ascii(text))
+```
+
+**Preview first 3 documents in each group:**\n
+
+```{r peek at imported data}
+df_data_clean %>% 
+  group_by(author) %>% 
+  slice_head(n = 3) %>% 
+  ungroup()
+```
+
+**Are all texts in UTF-8 encoding?**\n
+
+```{r check if texts are in UTF-8 encoding}
+### are all texts in UTF-8 encoding? necessary for udpipe parsing
+all(stri_enc_isutf8(df_data_clean$text))
+```
+
+### Import Norms
+
+Import norms (in .xlsx format) from `norms` folder.
+
+```{r import norms, warning = F, message = F}
+### make list of all file names from the norms folder
+norms_file_list <- fs::dir_ls("norms/")
+tibble(norms_file_list)
+
+### import all files from norms file list
+### ALL FILES MUST BE IN EXCEL FORMAT TO WORK WITH THIS CHUNK
+### can edit as needed if files are in another format (.csv, .sav, etc.), but all files here should be in the same file format
+df_norms_raw <- 
+  map_dfr(norms_file_list, read_excel, col_names = TRUE) # to label by file name, set `.id = "source"`
+
+### clean variable names
+df_norms_clean <- 
+  df_norms_raw %>% 
+  mutate(across(.cols = everything(), ~ str_to_lower(.))) %>%
+  clean_names() 
+
+### collapse redundant rows and columns
+df_norms_clean <- 
+  df_norms_clean %>% 
+  unite(col = "word", c(word, word_2), na.rm = TRUE) %>% # collapse word columns, they never contain duplicated data
+  mutate(across(c(len, syl, fam, img), 
+                ~ case_when(!is.na(pym) ~ NA_character_, # remove cases where data (rows) are duplicated across Clark & Paivio (2004) datasets (where words have no PYM value)
+                            TRUE ~ .))) %>% 
+  group_by(word) %>%
+  summarize(across(.cols = everything(), 
+                   ~ paste(.[!is.na(.)], collapse = ""))) %>% # collapse rows, they no longer contain duplicated data
+  ungroup()
+
+### rename variable names, clean variable types
+df_norms_clean <- 
+  df_norms_clean %>% 
+  rename(# concreteness norms (Brysbaert et al., 2014)
+         conc_bigram = bigram, 
+         conc_rating_mean = conc_m,
+         conc_unknown = unknown,
+         conc_n_obs = total,
+         conc_percent_known = percent_known,
+         subtlex_us_freq_count = subtlex,
+         # prevalence norms (Brysbaert et al., 2019)
+         prev_percent_known = pknown,
+         prev_n_obs = nobs,
+         prev_prevalence = prevalence,
+         subtlex_us_freq_zipf = freq_zipf_us,
+         # age of acquisition norms (Kuperman et al., 2012)
+         aoa_occur_total = occur_total,
+         aoa_occur_num = occur_num,
+         subtlex_us_freq_pm = freq_pm,
+         aoa_rating_mean = rating_mean,
+         aoa_rating_sd = rating_sd,
+         aoa_percent_known = dunno,
+         # socialness norms (Diveica et al., 2021)
+         soc_rating_mean = mean,
+         soc_rating_sd = sd,
+         soc_rating_median = median,
+         soc_rating_min = min,
+         soc_rating_max = max,
+         soc_rating_n_obs = n) %>%
+  # more extensive and diverse norms (Clark & Paivio, 2004)
+  rename_with( ~ paste0("cp_", .), .cols = !contains(c("_", "word"))) %>%
+  mutate(across(.cols = -word, ~ as.numeric(.))) 
+
+### calculate new variables
+### can run if interested in normed words' length/syllables, but better to calculate with text data later ("Calculate Variables for Parsed Text")
+# df_norms_clean <- 
+#   df_norms_clean %>%
+#   mutate(calc_len = case_when(conc_bigram == 1 ~ NA_integer_, # calculate word length
+#                               TRUE ~ nchar(word)),
+#          calc_syl = case_when(conc_bigram == 1 ~ NA_integer_, # look up number of syllables ("from CMU pronunciation dictionary")
+#                               TRUE ~ nsyllable(word)))
+```
+
+**Preview random sample of 100 words with normed ratings:**\n
+
+```{r peek at cleaned norms, warning = F, message = F}
+set.seed(0223)
+df_norms_clean %>% 
+  slice_sample(n = 100) %>% 
+  arrange(word)
+```
+
+:::
+
+## Text Analysis
+
+::: {.panel-tabset}
+
+### Set Up UDPipe Model
+
+```{r udpipe model}
+### run the following two lines if you do not have a local copy of the udpipe model file
+# udmodel <- udpipe_download_model(language = "english-partut") 
+# udmodel <- udpipe_load_model(file = udmodel$file_model)
+
+udmodel <- udpipe_load_model(file = "english-partut-ud-2.5-191206.udpipe") # put .udpipe file in the same folder as this script
+```
+
+**UDPipe Model Info:**\n
+
+```{r udpipe model info}
+udmodel
+```
+
+### Parse Text
+
+Text parsed into tokens.
+
+```{r parse text}
+df_parsed <-
+  udpipe_annotate(object = udmodel,
+                  x = df_data_clean$text,
+                  doc_id = df_data_clean$doc_id) %>% 
+  as.data.frame()
+
+df_parsed %>% 
+  head(30)
+```
+
+### Clean Parsed DF
+
+Clean up the parsed text by adding back in any metadata of your choice from the original data file.
+
+```{r clean parsed df, warning = F}
+df_parsed <-
+  df_parsed %>% 
+  mutate(doc_id = as.numeric(doc_id)) # set doc_id as numeric (parsing changes to character)
+
+### join text metadata from df_data_clean (in this case, author) back onto parsed df
+df_parsed <- 
+  df_data_clean %>% 
+  select(doc_id, author) %>% # select relevant metadata variables from text data CSV
+  right_join(df_parsed, by = "doc_id")
+
+### count number of unique documents per metadata variable (author)
+df_parsed %>%
+  group_by(author) %>% 
+  summarize(doc_count = length(unique(doc_id))) %>% 
+  ungroup()
+```
+
+### Label Stopwords
+
+Label stopwords (i.e., words that have "grammatical function but reveal nothing about the content of documents"; [Wilbur & Sirotkin, 1992](https://doi.org/10.1177/016555159201800106){target="_blank"}) for later ability to analyze with or without them.
+
+```{r set stopword list}
+stopword_list <- data_stopwords_snowball$en # 175 tokens in snowball list, fewest tokens = most conservative option (removes less)
+stopword_list_label <- "snowball"
+```
+
+**Example stopwords from current stopword list (``r stopword_list_label``):**\n
+
+```{r label stopwords}
+stopword_list %>% 
+  head(10)
+
+stopword_list %>% 
+  tail(10)
+
+df_parsed <- 
+  df_parsed %>%
+  mutate(stopword = case_when(str_to_lower(token) %in% stopword_list ~ 1,
+                              TRUE ~ 0)) %>% 
+  mutate(stopword = factor(stopword,
+                           levels = c(1, 0),
+                           labels = c("stopword", "not_stopword")))
+
+df_parsed %>% 
+  select(stopword, author) %>% 
+  tbl_summary(by = author)
+```
+
+### Calculate Variables for Parsed Text
+
+Calculate variables of interest (e.g., word length, number of syllables) for each token (word) in the parsed text.
+
+```{r calculate variables for parsed text}
+df_parsed <-
+  df_parsed %>%
+  mutate(calc_len = case_when(upos %in% c("PUNCT", "NUM") ~ NA_integer_, # calculate word length
+                              TRUE ~ nchar(str_to_lower(token))),
+         calc_syl = case_when(upos %in% c("PUNCT", "NUM") ~ NA_integer_, # look up number of syllables ("from CMU pronunciation dictionary")
+                              TRUE ~ nsyllable(str_to_lower(token))))
+
+df_parsed %>% 
+  select(calc_len, calc_syl, author) %>% 
+  tbl_summary(type = list(calc_syl ~ "continuous"),
+              statistic = list(all_continuous() ~ "{mean} ({sd})"), 
+              digits = list(all_continuous() ~ c(2, 2)),
+              by = author)
+```
+
+:::
+
+## Lookup
+
+::: {.panel-tabset}
+
+### Select Norms of Interest
+
+Select the norms that you want to extract for each token (word) in the parsed text.
+
+**Current full list of norms:**\n
+
+```{r current full list of norms}
+### current full list of norms
+df_norms_clean %>% 
+  names() %>% 
+  tibble() %>% 
+  rename(current_full_list_norms = ".")
+```
+
+**Selected norms:**\n
+
+```{r select norms}
+### pick which norms to look up
+selected_norms <-
+  df_norms_clean %>% 
+  select(word, # word is always necessary (to bind to text data)
+         conc_rating_mean, prev_prevalence, subtlex_us_freq_zipf, cp_pron, aoa_rating_mean)
+
+selected_norms %>% 
+  names() %>% 
+  tibble() %>% 
+  rename("selected_norms" = ".")
+
+### extract selected norms as list for calculating variables for each norm later
+selected_norms_list <-
+  selected_norms %>% 
+  names()
+```
+
+### Join Selected Norms with Parsed Text
+
+Match tokens (words) with their normed ratings (and other calculated variables, e.g., number of syllables).
+
+```{r join selected norms}
+### join normed ratings and other calculated lexical variables onto parsed df
+df_joined <- 
+  df_parsed %>% 
+  mutate(lower_token = str_to_lower(token)) %>% 
+  left_join(selected_norms, by = join_by(lower_token == word))
+
+df_joined %>% 
+  relocate(token, calc_len, calc_syl, conc_rating_mean) %>% 
+  head(50)
+```
+
+### Sentiment Analysis
+
+Calculate by-sentence sentiment (positive values = more pleasant, negative values = more unpleasant) and summarize across all sentences in a document (`mean` = average valence, `sd` = variability in valence). 
+
+```{r sentiment analysis}
+### calculate sentiment by sentence
+df_sentiment <- 
+  df_data_clean %>%
+  select(doc_id, text, author) %>% 
+  get_sentences() %$% # requires magrittr
+  sentimentr::sentiment_by(text, list(doc_id)) 
+
+### remove texts with no words, rename variables
+df_sentiment <-
+  df_sentiment %>%
+  filter(word_count > 0) %>% 
+  rename("sentiment_mean" = ave_sentiment,
+         "sentiment_sd" = sd) %>% 
+  select(-word_count) # drop word count as calculated by sentimentr, prefer udpipe since it's more transparent
+
+df_sentiment %>% 
+  relocate(doc_id, sentiment_mean, sentiment_sd)
+```
+
+Match documents with their sentiment values.
+
+```{r join sentiment analysis}
+### join sentiment data back onto df_data_clean
+df_data_clean <- 
+  left_join(df_data_clean, df_sentiment,
+            by = "doc_id")
+  
+df_data_clean %>% 
+  select(doc_id, author, text, contains("sentiment"))
+```
+
+:::
+
+## Calculate
+
+::: {.panel-tabset}
+
+### Calculate Variables by Document
+
+Summarize selected norms in terms of:
+
+* **`mean`**: mean values across all tokens (words) or sentences (in the case of sentence word count) in a given document
+* **`n`**: number of tokens (words) that had valid data (i.e., `1` = 100% of words in the original text had normed ratings from which the derived a mean value) in a given document
+
+If **`n`** is quite low (approaching zero), that means a very small proportion of the words in the document had valid ratings/were normed in the current set of studies. **Use caution when analyzing/interpreting any means that are derived from such data.**
+
+```{r calculate variables by document}
+### run to peek at tokens (words) without punctuation or numbers
+# df_joined %>% 
+#   filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+#   head(50)
+
+### calculate variables for each variable selected in selected_norms
+df_calc_by_doc <- 
+  df_joined %>% 
+  filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+  group_by(doc_id, author) %>% 
+  summarize(across(any_of(selected_norms_list),
+                   list(mean = ~ mean(.x, na.rm = TRUE),
+                        n = ~ sum(!is.na(.x))/n()),
+                   .names = "{.col}_{.fn}"),
+            .groups = "keep") %>% 
+  rename_with(.cols = contains("mean_mean"), 
+              .fn = ~ str_replace_all(string = .x, 
+                                      pattern = "mean_mean", 
+                                      replacement = "mean")) %>% 
+  ungroup()
+  
+### calculate mean word count per sentence
+df_calc_by_doc <- 
+  df_joined %>% 
+  filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+  group_by(doc_id, author, sentence_id) %>% 
+  summarize(sentence_word_count = n(), 
+            .groups = "keep") %>% 
+  ungroup() %>% 
+  group_by(doc_id, author) %>% 
+  summarize(sentence_word_count_mean = mean(sentence_word_count), 
+            .groups = "keep") %>% 
+  ungroup() %>% 
+  left_join(df_calc_by_doc, by = c("doc_id", "author"))
+
+### calculate mean word count per document
+df_calc_by_doc <-
+  df_joined %>% 
+  filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+  group_by(doc_id, author) %>% 
+  summarize(doc_word_count = n(), 
+            .groups = "keep") %>% 
+  ungroup() %>% 
+  left_join(df_calc_by_doc, by = c("doc_id", "author"))
+
+### join metadata and sentiment data onto calculated variables per document
+df_calc_by_doc <-
+  df_data_clean %>%
+  select(doc_id, author, sentiment_mean, sentiment_sd) %>% 
+  right_join(df_calc_by_doc, by = c("doc_id", "author"))
+
+df_calc_by_doc
+```
+
+### Calculate Variables by Document Without Stopwords
+
+Same as previous, **except removes all stopwords** (as defined by current list, **[`r stopword_list_label`](#text-analysis)**) prior to calculations.
+Could be of interest if stopwords could be muddying the data (e.g., one level in factor uses lots of stopwords that inflate word prevalence values).
+
+Summarize selected norms in terms of:
+
+* **`mean`**: mean values across all tokens (words) or sentences (in the case of sentence word count) in a given document
+* **`n`**: number of tokens (words) that had valid data (i.e., `1` = 100% of words in the original text had normed ratings from which the derived a mean value) in a given document
+
+If **`n`** is quite low (approaching zero), that means a very small proportion of the words in the document had valid ratings/were normed in the current set of studies. **Use caution when analyzing/interpreting any means that are derived from such data.**
+
+```{r calculate variables by document without stopwords}
+### run to peek at tokens (words) without punctuation, numbers, or stopwords
+# df_joined %>% 
+#   filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+#   filter(stopword != "stopword") %>% 
+#   head(50)
+  
+### calculate variables for each variable selected in selected_norms
+df_calc_by_doc_wo_stop <- 
+  df_joined %>% 
+  filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+  filter(stopword != "stopword") %>% 
+  group_by(doc_id, author) %>% 
+  summarize(across(any_of(selected_norms_list),
+                   list(mean = ~ mean(.x, na.rm = TRUE),
+                        n = ~ sum(!is.na(.x))/n()),
+                   .names = "{.col}_{.fn}"),
+            .groups = "keep") %>% 
+  rename_with(.cols = contains("mean_mean"), 
+              .fn = ~ str_replace_all(string = .x, 
+                                      pattern = "mean_mean", 
+                                      replacement = "mean")) %>% 
+  ungroup()
+  
+### calculate mean word count per document
+df_calc_by_doc_wo_stop <- 
+  df_joined %>% 
+  filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+  filter(stopword != "stopword") %>% 
+  group_by(doc_id, author, sentence_id) %>% 
+  summarize(sentence_word_count = n(), 
+            .groups = "keep") %>% 
+  ungroup() %>% 
+  group_by(doc_id, author) %>% 
+  summarize(sentence_word_count_mean = mean(sentence_word_count), 
+            .groups = "keep") %>% 
+  ungroup() %>% 
+  left_join(df_calc_by_doc_wo_stop, by = c("doc_id", "author"))
+
+### calculate mean word count per document
+df_calc_by_doc_wo_stop <-
+  df_joined %>% 
+  filter(!(upos %in% c("PUNCT", "NUM"))) %>% 
+  filter(stopword != "stopword") %>% 
+  group_by(doc_id, author) %>% 
+  summarize(doc_word_count = n(), 
+            .groups = "keep") %>% 
+  ungroup() %>% 
+  left_join(df_calc_by_doc_wo_stop, by = c("doc_id", "author"))
+
+### OPEN QUESTION: I question the validity of calculating sentiment accurately after dropping stop words
+### could theoretically re-run sentimentr functions after dropping, but I doubt its accuracy without these words (shifters probably get dropped)
+# df_calc_by_doc_wo_stop <-
+#   df_data_clean %>%
+#   select(doc_id, author, sentiment_mean, sentiment_sd) %>% 
+#   right_join(df_calc_by_doc_wo_stop, by = c("doc_id", "author"))
+
+df_calc_by_doc_wo_stop
+```
+
+:::
+
+## Results
+
+::: {.panel-tabset}
+
+### Compare
+
+Compare calculated variables across some grouping factor.
+
+```{r compare by author}
+df_calc_by_doc %>% 
+  select(-doc_id, -ends_with("_n")) %>% 
+  tbl_summary(by = author,
+              statistic = list(all_continuous() ~ "{mean} ({sd})"), 
+              digits = list(all_continuous() ~ c(2, 2))) #%>% 
+  #add_p() # optional, conducts hypothesis tests comparing across factors ("by" argument above)
+
+df_calc_by_doc %>% 
+  select(author, ends_with("_n")) %>% 
+  tbl_summary(by = author,
+              statistic = list(all_continuous() ~ "{mean} ({sd})"), 
+              digits = list(all_continuous() ~ c(2, 2)))
+
+df_calc_by_doc %>% 
+  ggstatsplot::ggbetweenstats(x = author, y = conc_rating_mean, type = "robust")
+
+df_calc_by_doc %>% 
+  ggstatsplot::ggbetweenstats(x = author, y = sentiment_mean, type = "robust")
+```
+
+### Compare Without Stopwords
+
+Compare calculated variables (without stopwords) across some grouping factor.
+
+```{r compare by author without stopwords}
+df_calc_by_doc_wo_stop %>% 
+  select(-doc_id, -ends_with("_n")) %>% 
+  tbl_summary(by = author,
+              statistic = list(all_continuous() ~ "{mean} ({sd})"), 
+              digits = list(all_continuous() ~ c(2, 2))) #%>% 
+  #add_p() # optional, conducts hypothesis tests comparing across factors ("by" argument above)
+
+df_calc_by_doc_wo_stop %>% 
+  select(author, ends_with("_n")) %>% 
+  tbl_summary(by = author,
+              statistic = list(all_continuous() ~ "{mean} ({sd})"), 
+              digits = list(all_continuous() ~ c(2, 2)))
+
+df_calc_by_doc_wo_stop %>% 
+  ggstatsplot::ggbetweenstats(x = author, y = conc_rating_mean, type = "robust")
+```
+
+:::
+
+## Export
+
+::: {.panel-tabset}
+
+### Export CSVs
+
+Export data as CSVs.
+
+```{r export csv}
+csv_file_start <- "output/lex-lookup_"
+
+csv_file_end <- 
+  paste0(as.character(format(Sys.time(), '%F_%I-%M%p')),
+         ".csv", sep = "")
+
+write_csv(file = paste0(csv_file_start, "by-token_", csv_file_end, sep = ""),
+          x = df_joined)
+
+write_csv(file = paste0(csv_file_start, "by-doc_", csv_file_end, sep = ""),
+          x = df_calc_by_doc)
+
+write_csv(file = paste0(csv_file_start, "by-doc-wo-stop_", csv_file_end, sep = ""),
+          x = df_calc_by_doc_wo_stop)
+```
+
+**Files in output folder:**\n
+
+```{r export csv list}
+fs::dir_ls("output/")
+```
+
+### Save RData
+
+Save workspace as RData file.
+
+```{r save rdata, warning = F}
+rdata_file_name <- 
+  paste0("output/lex-lookup_",
+         as.character(format(Sys.time(), '%F_%I-%M%p')),
+         ".RData", sep = "")
+rdata_file_name
+
+save.image(file = rdata_file_name, safe = TRUE)
+```
+
+**Files in output folder:**\n
+
+```{r save rdata list, warning = F}
+fs::dir_ls("output/")
+```
+
+:::
