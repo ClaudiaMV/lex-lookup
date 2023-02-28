@@ -1,14 +1,25 @@
 # **lex-lookup**
 
-This script looks up lexical properties of words in text documents based on normed ratings and summarizes (and, if wanted, analyzes) them across documents and any other variables (continuous or categorical). Technically, some calculated variables are not entirely lexical (e.g., sentiment), but I couldn't think of a better name. *Problem for future me, I guess.*
+This script (`lex-lookup.qmd`) looks up lexical properties of words in text documents based on normed ratings, and then summarizes (and, if wanted, analyzes) them across documents or any other variables of interest (either continuous or categorical). Technically, some calculated variables are not entirely lexical (e.g., sentiment), but I couldn't think of a better name. *Problem for future me, I guess.*
 
 The norms that are currently included are:
 
-* Brysbaert, M., Mandera, P., McCormick, S. F., & Keuleers, E. (2019). Word prevalence norms for 62,000 English lemmas. *Behavior Research Methods*, *51*, 467-479. [https://doi.org/10.3758/s13428-018-1077-9](https://doi.org/10.3758/s13428-018-1077-9){target="_blank"}
-* Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014). Concreteness ratings for 40 thousand generally known English word lemmas. *Behavior Research Methods*, *46*, 904-911. [https://doi.org/10.3758/s13428-013-0403-5](https://doi.org/10.3758/s13428-013-0403-5){target="_blank"}
-* Clark, J. M., & Paivio, A. (2004). Extensions of the Paivio, Yuille, and Madigan (1968) norms. *Behavior Research Methods, Instruments, & Computers*, *36*(3), 371-383. [https://doi.org/10.3758/bf03195584](https://doi.org/10.3758/bf03195584){target="_blank"}
-* Diveica, V., Pexman, P. M., & Binney, R. J. (2022). Quantifying social semantics: An inclusive definition of socialness and ratings for 8388 English words. *Behavior Research Methods*, 1-13. [https://doi.org/10.3758/s13428-022-01810-x](https://doi.org/10.3758/s13428-022-01810-x){target="_blank"}
-* Kuperman, V., Stadthagen-Gonzalez, H., & Brysbaert, M. (2012). Age-of-acquisition ratings for 30,000 English words. *Behavior Research Methods*, *44*, 978-990. [https://doi.org/10.3758/s13428-012-0210-4](https://doi.org/10.3758/s13428-012-0210-4){target="_blank"}
+* age of acquisition (Kuperman et al., 2012)[^kuperman2012]
+* assorted norms from Clark & Paivio (2004)[^clarkpaivio2004], too many to list here
+* concreteness (Brysbaert et al., 2014)[^brysbaert2014]
+* socialness (Diveica et al., 2022)[^diveica2022]
+* word frequency (Brysbaert & New, 2009)[^brysbaertnew2009]
+* word prevalence (Brysbaert et al., 2019)[^brysbaert2019]
+
+Calculated variables include:
+
+* number of syllables (Benoit, 2022)[^benoit2022]
+* document length (number of words)
+* sentence length (number of words)
+* sentiment (Rinker, 2021)[^rinker2021]
+* word length (number of characters)
+
+For a full demo, open `lex-lookup.html`.
 
 
 ## **Gettting Started**
@@ -18,7 +29,7 @@ The norms that are currently included are:
 
 ## **Installation**
 
-The first chunk in the script uses the `pacman` package to download any necessary packages that are not currently installed. As such, `pacman` needs to be installed for this to run (`install.packages("pacman")`). 
+The first chunk (`setup`) in the script uses the `pacman` package to download any necessary packages that are not currently installed. As such, `pacman` needs to be installed for the rest be installed (`install.packages("pacman")`). 
 
 
 ## **Usage**
@@ -26,6 +37,8 @@ The first chunk in the script uses the `pacman` package to download any necessar
 Text data (and any associated variables of interest) should be included in a CSV file in the `data` folder. Make sure the `Import Data` chunk in the script points to that file.
 
 Data should include a column named `text` and each document should be assigned a unique identifier in a column named `doc_id`. 
+
+Associated variables of interest (e.g., grouping variables) need to be in the CSV with the text data. Make sure the script points to the new variable(s) of interest instead of the default (`author`). 
 
 If in doubt, check the example `text_data.csv` file provided. Example texts are excerpts from Proust's *In Search of Lost Time* (1913-1927/1992) and James's *The Principles of Psychology* (1890), because it turns out I'm a very predictable person (and also because the books are in the public domain now, but mostly the former).
 
@@ -45,3 +58,15 @@ Adapted from [Make a README](https://www.makeareadme.com/) template and [Best-RE
 ## **License**
 
 Distributed under the [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html) license. See `LICENSE` for more information.
+
+
+## **References**
+
+[^benoit2022]: Benoit, K. (2022). nsyllable: Count syllables in character vectors. R package version 1.0.1, [https://CRAN.R-project.org/package=nsyllable](https://CRAN.R-project.org/package=nsyllable)
+[^brysbaert2019]: Brysbaert, M., Mandera, P., McCormick, S. F., & Keuleers, E. (2019). Word prevalence norms for 62,000 English lemmas. *Behavior Research Methods*, *51*, 467-479. [https://doi.org/10.3758/s13428-018-1077-9](https://doi.org/10.3758/s13428-018-1077-9)
+[^brysbaertnew2009]: Brysbaert, M., & New, B. (2009). Moving beyond Kučera and Francis: A critical evaluation of current word frequency norms and the introduction of a new and improved word frequency measure for American English. *Behavior Research Methods*, *41*(4), 977-990. [https://doi.org/10.3758/BRM.41.4.977](https://doi.org/10.3758/BRM.41.4.977)
+[^brysbaert2014]: Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014). Concreteness ratings for 40 thousand generally known English word lemmas. *Behavior Research Methods*, *46*, 904-911. [https://doi.org/10.3758/s13428-013-0403-5](https://doi.org/10.3758/s13428-013-0403-5)
+[^clarkpaivio2004]: Clark, J. M., & Paivio, A. (2004). Extensions of the Paivio, Yuille, and Madigan (1968) norms. *Behavior Research Methods, Instruments, & Computers*, *36*(3), 371-383. [https://doi.org/10.3758/bf03195584](https://doi.org/10.3758/bf03195584)
+[^diveica2022]: Diveica, V., Pexman, P. M., & Binney, R. J. (2022). Quantifying social semantics: An inclusive definition of socialness and ratings for 8388 English words. *Behavior Research Methods*, 1-13. [https://doi.org/10.3758/s13428-022-01810-x](https://doi.org/10.3758/s13428-022-01810-x)
+[^kuperman2012]: Kuperman, V., Stadthagen-Gonzalez, H., & Brysbaert, M. (2012). Age-of-acquisition ratings for 30,000 English words. *Behavior Research Methods*, *44*, 978-990. [https://doi.org/10.3758/s13428-012-0210-4](https://doi.org/10.3758/s13428-012-0210-4)
+[^rinker2021]: Rinker, T. W. (2021). sentimentr: Calculate text polarity sentiment. Version 2.9.1. [https://github.com/trinker/sentimentr](https://github.com/trinker/sentimentr)
