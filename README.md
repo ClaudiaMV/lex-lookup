@@ -2,6 +2,8 @@
 
 This R script (`lex-lookup.qmd`) looks up lexical properties of words in text documents based on normed ratings, and then summarizes (and, if wanted, analyzes) them across documents or any other variables of interest (either continuous or categorical). Technically, some calculated variables are not entirely lexical (e.g., sentiment), but I couldn't think of a better name. *Problem for future me, I guess.*
 
+Texts are parsed using `{udpipe}`[^wijffels2023].
+
 The norms that are currently included are:
 
 * age of acquisition (Kuperman et al., 2012)[^kuperman2012]
@@ -72,3 +74,4 @@ Distributed under the [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html) 
 [^kuperman2012]: Kuperman, V., Stadthagen-Gonzalez, H., & Brysbaert, M. (2012). Age-of-acquisition ratings for 30,000 English words. *Behavior Research Methods*, *44*, 978-990. [https://doi.org/10.3758/s13428-012-0210-4](https://doi.org/10.3758/s13428-012-0210-4)
 [^proust1913-1927]: Proust, M. (1913–1927/1992). *In search of lost time.* (C. K. Scott Moncrieff, T. Kilmartin, & A. Mayor, Trans.). The Modern Library. (Original work published 1913–1927)
 [^rinker2021]: Rinker, T. W. (2021). sentimentr: Calculate text polarity sentiment. Version 2.9.1. [https://github.com/trinker/sentimentr](https://github.com/trinker/sentimentr)
+[^wijffels2023]: Wijffels, J. (2023). udpipe: Tokenization, Parts of Speech Tagging, Lemmatization and Dependency Parsing with the UDPipe NLP Toolkit. R package version 0.8.11. [https://CRAN.R-project.org/package=udpipe](https://CRAN.R-project.org/package=udpipe)
