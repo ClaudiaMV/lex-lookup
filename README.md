@@ -1,5 +1,7 @@
 # **lex-lookup**
 
+[![DOI](https://zenodo.org/badge/607434376.svg)](https://zenodo.org/badge/latestdoi/607434376)
+
 This R script (`lex-lookup.qmd`) looks up lexical properties of words in text documents based on normed ratings, and then summarizes (and, if wanted, analyzes) them across documents or any other variables of interest (either continuous or categorical). Technically, some calculated variables are not entirely lexical (e.g., sentiment), but I couldn't think of a better name. *Problem for future me, I guess.*
 
 Texts are parsed using `{udpipe}`[^wijffels2023].
